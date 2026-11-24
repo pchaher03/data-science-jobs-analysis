@@ -2,7 +2,7 @@
 
 An end-to-end data pipeline and market audit analyzing **636 deduplicated, full-text job postings** (≥ 1,000 description characters) across **Data Analyst**, **Data Scientist**, **ML Engineer**, and **AI Engineer** roles, to identify the highest-ROI career entry points and the real technical stack requirements.
 
-🔗 **[Interactive Tableau Dashboard](https://public.tableau.com:9443/views/BreakingIntoDataAIEntry-LevelJobMarketAudit/Entry-LevelDataAIAudit?:language=en-US&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link)** · 📄 **[Full Case Study Report](docs/case_study_report.html)** · 🖥️ **[Presentation](docs/executive_presentation.html)** · 📋 **[Project Specs](docs/project_vision.md)**
+🔗 **[Interactive Tableau Dashboard](https://public.tableau.com/app/profile/pablo.chavez3688/viz/BreakingIntoDataAIEntry-LevelJobMarketAudit/Entry-LevelDataAIAudit)** · 📄 **[Full Case Study Report](https://pchaher03.github.io/data-science-jobs-analysis/case_study_report.html)** · 🖥️ **[Presentation](https://pchaher03.github.io/data-science-jobs-analysis/executive_presentation.html)** · 📋 **[Project Specs](docs/project_vision.md)**
 
 ![Dashboard Preview](images/dashboard_preview.png)
 
