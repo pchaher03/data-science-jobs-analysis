@@ -1,0 +1,5 @@
+normalized_role,postings,sql,python,r_lang,excel,tableau,power_bi,scikit_learn,pytorch,tensorflow,llm_genai,aws,gcp,azure,docker_k8s,git,spark_etl
+Data Scientist,69,44.9,62.3,18.8,5.8,1.4,1.4,2.9,17.4,10.1,53.6,0,1.4,2.9,1.4,5.8,26.1
+ML Engineer,69,17.4,84.1,1.4,1.4,0,0,10.1,63.8,43.5,56.5,8.7,1.4,0,7.2,5.8,24.6
+AI Engineer,42,14.3,69,4.8,14.3,0,2.4,4.8,9.5,2.4,95.2,7.1,9.5,11.9,2.4,9.5,7.1
+Data Analyst,8,87.5,50,0,12.5,12.5,0,0,0,0,12.5,0,0,12.5,0,12.5,25

@@ -1,0 +1,368 @@
+---
+title: "Breaking Into Data & AI"
+subtitle: "An Entry-Level Job Market & Skill-Gap Audit (n = 636 Full-Text Postings)"
+author: "Pablo"
+date: today
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    progress: true
+    transition: fade
+    width: 1280
+    height: 720
+    margin: 0.08
+    embed-resources: true
+    fig-width: 10.5
+    fig-height: 4.3
+    fig-dpi: 150
+    output-file: executive_presentation.html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(scales)
+library(knitr)
+
+options(knitr.kable.NA = "—")
+
+theme_set(
+  theme_minimal(base_size = 15) +
+    theme(
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold", size = 18),
+      plot.subtitle = element_text(color = "#4b5563", size = 13),
+      legend.position = "top",
+      panel.grid.minor = element_blank()
+    )
+)
+
+data_dir <- if (dir.exists("../data/processed")) "../data/processed" else "data/processed"
+
+jobs <- read_csv(file.path(data_dir, "jobs_cleaned.csv"),
+                 show_col_types = FALSE, na = c("", "NA"))
+
+role_levels <- c("Data Analyst", "Data Scientist", "ML Engineer", "AI Engineer")
+tier_levels <- c("Intern", "Junior / Entry-Level", "Mid/Senior Mislabeled")
+
+jobs <- jobs |>
+  mutate(
+    normalized_role = factor(normalized_role, levels = role_levels),
+    seniority_tier  = factor(seniority_tier,  levels = tier_levels),
+    experience_tier = factor(
+      experience_tier,
+      levels = c("0-1 Years / Entry", "Not Specified", "2+ Years", "3+ Years")
+    ),
+    degree_tier = factor(
+      degree_tier,
+      levels = c("Not Specified", "Bachelor's", "Master's", "PhD")
+    ),
+    work_mode = factor(
+      work_mode,
+      levels = c("Remote", "Hybrid", "On-Site / Not Specified")
+    )
+  )
+
+# Verified entry-level & internship scope
+scope <- jobs |> filter(seniority_tier %in% c("Intern", "Junior / Entry-Level"))
+
+skill_meta <- tribble(
+  ~skill,             ~skill_label,           ~domain,
+  "skill_sql",        "SQL",                  "Programming & Querying",
+  "skill_python",     "Python",               "Programming & Querying",
+  "skill_r",          "R",                    "Programming & Querying",
+  "skill_excel",      "Excel",                "BI & Spreadsheets",
+  "skill_tableau",    "Tableau",              "BI & Spreadsheets",
+  "skill_powerbi",    "Power BI",             "BI & Spreadsheets",
+  "skill_sklearn",    "Scikit-Learn",         "ML & AI Frameworks",
+  "skill_pytorch",    "PyTorch",              "ML & AI Frameworks",
+  "skill_tensorflow", "TensorFlow",           "ML & AI Frameworks",
+  "skill_llm_genai",  "LLM / GenAI",          "ML & AI Frameworks",
+  "skill_aws",        "AWS",                  "Cloud & Engineering",
+  "skill_gcp",        "GCP",                  "Cloud & Engineering",
+  "skill_azure",      "Azure / Databricks",   "Cloud & Engineering",
+  "skill_docker_k8s", "Docker / Kubernetes",  "Cloud & Engineering",
+  "skill_git",        "Git / CI-CD",          "Cloud & Engineering",
+  "skill_data_eng",   "Spark / ETL / dbt",    "Cloud & Engineering"
+)
+
+skill_pct <- scope |>
+  select(normalized_role, all_of(skill_meta$skill)) |>
+  pivot_longer(-normalized_role, names_to = "skill", values_to = "flag") |>
+  group_by(normalized_role, skill) |>
+  summarise(pct = mean(flag) * 100, .groups = "drop") |>
+  left_join(skill_meta, by = "skill")
+
+sal_scope <- scope |>
+  filter(has_listed_salary == 1, between(salary_midpoint, 10000, 500000))
+
+# Dynamic KPI metrics
+n_total        <- nrow(jobs)
+n_scope        <- nrow(scope)
+n_mislabeled   <- sum(jobs$seniority_tier == "Mid/Senior Mislabeled")
+pct_mislabeled <- round(n_mislabeled / n_total * 100, 1)
+pct_scope      <- round(n_scope / n_total * 100, 1)
+pct_adv_degree <- round(mean(scope$degree_tier %in% c("Master's", "PhD")) * 100, 1)
+median_sal_all <- median(sal_scope$salary_midpoint, na.rm = TRUE)
+
+htmltools::tags$style(htmltools::HTML("
+  .reveal { --r-main-font-size: 25px; --r-heading1-size: 1.75em; --r-heading2-size: 1.25em; --r-heading3-size: 0.98em; }
+  .reveal section { line-height: 1.28; }
+  .reveal ul, .reveal ol { margin-top: 0.25em; margin-bottom: 0.35em; }
+  .reveal li { margin-bottom: 0.25em; }
+  .reveal p { margin-top: 0.25em; margin-bottom: 0.35em; }
+  .reveal table { font-size: 0.72em; margin-top: 0.35em; }
+  .reveal th, .reveal td { padding: 0.32em 0.55em; }
+"))
+```
+
+## The Problem & Analytical Pipeline {.smaller}
+
+:::: {.columns}
+
+::: {.column width="48%"}
+### Business Question
+
+Aspiring data professionals face noisy job boards where "Entry-Level" searches return senior roles and truncated snippets hide real technical requirements.
+
+- **4 Target Tracks:** Data Analyst, Data Scientist, ML Engineer, AI Engineer
+- **Full-Text Quality Gate:** `LENGTH >= 1,000` chars (n = `r comma(n_total)` deduplicated postings)
+- **In-Scope Audit:** `r comma(n_scope)` verified Intern & Junior postings (`r pct_scope`%)
+:::
+
+::: {.column width="52%"}
+### End-to-End Architecture
+
+- **Multi-Source Ingestion (R):** Official Adzuna REST API + public ATS feeds (Greenhouse, Lever, Ashby, The Muse)
+- **Warehousing (PostgreSQL 16):** Idempotent ingestion into `raw_jobs` inside Docker Compose
+- **SQL Feature Engineering:** Deduplication, seniority filtering, and 16 POSIX regex (`~*`) skill flags
+- **BI & Reporting:** Interactive Tableau Public dashboard + reproducible Quarto deliverables
+:::
+
+::::
+
+::: {.notes}
+Walk through why we applied the 1,000-character quality gate: free-tier job APIs truncate descriptions at ~250 characters, hiding Python, SQL, and cloud requirements. Filtering to full-text ATS and API descriptions gives accurate skill recall.
+:::
+
+## Finding 1: The Seniority Distortion Gap
+
+**`r pct_mislabeled`%** (`r comma(n_mislabeled)` of `r comma(n_total)`) of non-senior search results actually require Senior/Lead titles or 4+ years of experience.
+
+```{r}
+#| label: slide-seniority-chart
+
+jobs |>
+  count(normalized_role, seniority_tier) |>
+  group_by(normalized_role) |>
+  mutate(total = sum(n)) |>
+  ungroup() |>
+  ggplot(aes(x = reorder(normalized_role, total), y = n, fill = seniority_tier)) +
+  geom_col(width = 0.62) +
+  geom_text(
+    aes(label = if_else(n >= 12, as.character(n), "")),
+    position = position_stack(vjust = 0.5),
+    color = "white",
+    fontface = "bold",
+    size = 4.5
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "Intern" = "#2A9D8F",
+      "Junior / Entry-Level" = "#264653",
+      "Mid/Senior Mislabeled" = "#BDBDBD"
+    ),
+    name = NULL
+  ) +
+  labs(
+    title = "Over 7 in 10 Postings Surface Mislabeled Mid/Senior Requirements",
+    subtitle = "ML Engineer has the highest distortion (191 mislabeled vs. 69 true Intern/Junior)",
+    x = NULL,
+    y = "Deduplicated Full-Text Postings"
+  )
+```
+
+## Finding 2: Universal vs. Specialized Stacks
+
+Python is the universal baseline (62%–84%), while LLM/GenAI dominates AI/ML tracks and SQL + BI anchors analytics.
+
+```{r}
+#| label: slide-skill-heatmap
+
+top_skills <- skill_pct |>
+  group_by(skill_label) |>
+  summarise(avg_pct = mean(pct), .groups = "drop") |>
+  slice_max(avg_pct, n = 10) |>
+  pull(skill_label)
+
+skill_pct |>
+  filter(skill_label %in% top_skills) |>
+  mutate(label_dark = pct <= 55) |>
+  ggplot(aes(x = normalized_role, y = reorder(skill_label, pct), fill = pct)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(
+    aes(label = sprintf("%.0f%%", pct), color = label_dark),
+    fontface = "bold",
+    size = 4.3,
+    show.legend = FALSE
+  ) +
+  scale_color_manual(values = c("TRUE" = "#1f2937", "FALSE" = "white")) +
+  scale_fill_gradient(low = "#f1f5f9", high = "#1d4ed8", name = "Mentioned (%)") +
+  labs(
+    title = "Top 10 Technical Skills Across Verified Intern & Junior Roles",
+    subtitle = "Percentage of full-text postings mentioning each tool (n = 188 in-scope postings)",
+    x = NULL,
+    y = NULL
+  )
+```
+
+## Finding 3: Credential & Experience Barriers
+
+AI Engineer shows the lowest graduate degree mention (16.7%), while ML Engineer (65.2%) and Data Scientist (55.1%) skew toward Master's/PhD candidates.
+
+```{r}
+#| label: slide-barriers-chart
+
+barriers <- scope |>
+  group_by(normalized_role) |>
+  summarise(
+    `Asks 2+ Years Exp.` = mean(experience_tier %in% c("2+ Years", "3+ Years")),
+    `Mentions Master's / PhD` = mean(degree_tier %in% c("Master's", "PhD")),
+    .groups = "drop"
+  ) |>
+  pivot_longer(-normalized_role, names_to = "Barrier", values_to = "Share")
+
+ggplot(barriers, aes(x = normalized_role, y = Share, fill = Barrier)) +
+  geom_col(position = position_dodge(width = 0.68), width = 0.6) +
+  geom_text(
+    aes(label = percent(Share, accuracy = 1)),
+    position = position_dodge(width = 0.68),
+    vjust = -0.45,
+    fontface = "bold",
+    size = 4.3
+  ) +
+  scale_y_continuous(labels = percent, limits = c(0, 0.8)) +
+  scale_fill_manual(
+    values = c("Asks 2+ Years Exp." = "#e9a23b", "Mentions Master's / PhD" = "#264653"),
+    name = NULL
+  ) +
+  labs(
+    title = "Experience & Advanced Degree Barriers in Entry-Level Postings",
+    subtitle = "Data Analyst sample is small (n = 8) due to tech-focused ATS board coverage",
+    x = NULL,
+    y = "Share of In-Scope Postings"
+  )
+```
+
+## Finding 4: Compensation & Work-Mode Flexibility
+
+Disclosed entry-level salaries cluster in coastal tech hubs (median = `r dollar(median_sal_all)`); ML Engineer and Data Scientist offer the widest Remote/Hybrid flexibility.
+
+```{r}
+#| label: slide-workmode-chart
+
+scope |>
+  count(normalized_role, work_mode, .drop = FALSE) |>
+  group_by(normalized_role) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(x = normalized_role, y = share, fill = work_mode)) +
+  geom_col(width = 0.6) +
+  geom_text(
+    aes(label = if_else(share >= 0.06, percent(share, accuracy = 1), "")),
+    position = position_stack(vjust = 0.5),
+    color = "white",
+    fontface = "bold",
+    size = 4.3
+  ) +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(
+    values = c(
+      "Remote" = "#2A9D8F",
+      "Hybrid" = "#e9a23b",
+      "On-Site / Not Specified" = "#9ca3af"
+    ),
+    name = NULL
+  ) +
+  labs(
+    title = "Work-Mode Availability Across Verified Intern & Junior Roles",
+    subtitle = "Over 40% of ML Engineer and Data Scientist openings explicitly support Remote or Hybrid work",
+    x = NULL,
+    y = "Share of In-Scope Postings"
+  )
+```
+
+## Cross-Role Entry-Level Scorecard {.smaller}
+
+Summary across all `r comma(n_scope)` verified Intern & Junior postings:
+
+```{r}
+#| label: slide-scorecard
+
+scorecard <- scope |>
+  group_by(normalized_role) |>
+  summarise(
+    Postings = n(),
+    `Explicit 0–1 Yr` = percent(mean(experience_tier == "0-1 Years / Entry"), 1),
+    `Asks 2+ Yrs` = percent(mean(experience_tier %in% c("2+ Years", "3+ Years")), 1),
+    `Master's / PhD` = percent(mean(degree_tier %in% c("Master's", "PhD")), 1),
+    `Remote / Hybrid` = percent(mean(work_mode != "On-Site / Not Specified"), 1),
+    .groups = "drop"
+  ) |>
+  left_join(
+    sal_scope |>
+      group_by(normalized_role) |>
+      summarise(
+        `Disclosed Pay (n)` = n(),
+        `Median Salary` = dollar(median(salary_midpoint)),
+        .groups = "drop"
+      ),
+    by = "normalized_role"
+  ) |>
+  rename(Role = normalized_role)
+
+kable(scorecard, align = "lrrrrrrr")
+```
+
+*Note on small cells:* Disclosed salaries (n = 2 to 13 per role) and Data Analyst (n = 8) reflect coastal tech pay-transparency disclosures and ATS board coverage.
+
+## Actionable Roadmap for Job Seekers {.smaller}
+
+1. **Apply Title-Level Exclusion Filters Immediately**
+   Over 70% of generic "entry-level" search results demand Senior titles or 4+ years of experience. Filter explicitly for *Intern*, *New Grad*, *Junior*, or *0–1 years*.
+
+2. **Build a Dual-Layer Technical Portfolio**
+   - **Universal Core:** Master Python + SQL + Git first—they appear across every track.
+   - **Track Differentiator:** Pair LLM/RAG + PyTorch + Cloud for AI/ML roles (74%–95% demand), or SQL + Tableau/Power BI for Data Analyst roles.
+
+3. **Target AI Engineering & Internships to Bypass Degree Gatekeeping**
+   AI Engineer postings emphasize shipped LLM/application skills over graduate degrees (76.2% do not specify a degree), while Data Science and ML Engineering favor students in Master's/PhD internship pipelines.
+
+## Governance, Limitations & Project Links {.smaller}
+
+:::: {.columns}
+
+::: {.column width="52%"}
+### Data Governance & Caveats
+
+- **Quality Gate Trade-Off:** Filtering `LENGTH >= 1,000` eliminated truncated Adzuna snippets for accurate regex skill detection, shifting sample weight toward tech/AI ATS boards (n = 8 Data Analyst caveat).
+- **Pay-Transparency Skew:** Salary medians reflect employers disclosing pay under state transparency laws (CA, NY, WA).
+- **Ethical & Reproducible:** 100% official public APIs/ATS feeds; reproducible via `docker compose up`.
+:::
+
+::: {.column width="48%"}
+### Explore the Deliverables
+
+- **Interactive Dashboard:** Tableau Public (Entry-Level Data & AI Audit)
+- **Full Technical Report:** `docs/case_study_report.html`
+- **Source Code & SQL:** GitHub (`R/`, `sql/`, `docker/`)
+:::
+
+::::

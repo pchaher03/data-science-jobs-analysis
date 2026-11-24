@@ -1,0 +1,441 @@
+---
+title: "Which Data & AI Role Is the Best Entry Point?"
+subtitle: "An evidence-based audit of untruncated entry-level and internship job descriptions"
+author: "Pablo"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5
+    fig-dpi: 150
+    output-file: case_study_report.html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(scales)
+library(knitr)
+
+theme_set(theme_minimal(base_size = 12) +
+            theme(plot.title.position = "plot",
+                  legend.position = "bottom"))
+
+# Quarto runs from the .qmd's folder (reports/), so data lives one level up.
+data_dir <- if (dir.exists("../data/processed")) "../data/processed" else "data/processed"
+
+jobs <- read_csv(file.path(data_dir, "jobs_cleaned.csv"),
+                 show_col_types = FALSE, na = c("", "NA"))
+
+role_levels <- c("Data Analyst", "Data Scientist", "ML Engineer", "AI Engineer")
+tier_levels <- c("Intern", "Junior / Entry-Level", "Mid/Senior Mislabeled")
+
+jobs <- jobs |>
+  mutate(
+    normalized_role = factor(normalized_role, levels = role_levels),
+    seniority_tier  = factor(seniority_tier,  levels = tier_levels),
+    experience_tier = factor(experience_tier,
+                             levels = c("0-1 Years / Entry", "Not Specified", "2+ Years", "3+ Years")),
+    degree_tier     = factor(degree_tier,
+                             levels = c("Not Specified", "Bachelor's", "Master's", "PhD")),
+    work_mode       = factor(work_mode,
+                             levels = c("Remote", "Hybrid", "On-Site / Not Specified"))
+  )
+
+# Analysis scope: postings that really are Intern / Junior (excludes mislabeled mid/senior roles)
+scope <- jobs |> filter(seniority_tier %in% c("Intern", "Junior / Entry-Level"))
+
+# Skill metadata (column -> label + domain)
+skill_meta <- tribble(
+  ~skill,             ~skill_label,           ~domain,
+  "skill_sql",        "SQL",                  "Programming & Querying",
+  "skill_python",     "Python",               "Programming & Querying",
+  "skill_r",          "R",                    "Programming & Querying",
+  "skill_excel",      "Excel",                "BI & Spreadsheets",
+  "skill_tableau",    "Tableau",              "BI & Spreadsheets",
+  "skill_powerbi",    "Power BI",             "BI & Spreadsheets",
+  "skill_sklearn",    "Scikit-Learn",         "ML & AI Frameworks",
+  "skill_pytorch",    "PyTorch",              "ML & AI Frameworks",
+  "skill_tensorflow", "TensorFlow",           "ML & AI Frameworks",
+  "skill_llm_genai",  "LLM / GenAI",          "ML & AI Frameworks",
+  "skill_aws",        "AWS",                  "Cloud & Engineering",
+  "skill_gcp",        "GCP",                  "Cloud & Engineering",
+  "skill_azure",      "Azure / Databricks",   "Cloud & Engineering",
+  "skill_docker_k8s", "Docker / Kubernetes",  "Cloud & Engineering",
+  "skill_git",        "Git / CI-CD",          "Cloud & Engineering",
+  "skill_data_eng",   "Spark / ETL / dbt",    "Cloud & Engineering"
+) |> mutate(domain = factor(domain, levels = unique(domain)))
+
+skill_pct <- scope |>
+  select(normalized_role, all_of(skill_meta$skill)) |>
+  pivot_longer(-normalized_role, names_to = "skill", values_to = "flag") |>
+  group_by(normalized_role, skill) |>
+  summarise(pct = mean(flag) * 100, .groups = "drop") |>
+  left_join(skill_meta, by = "skill")
+
+# Salary: keep plausible annual figures only (guards against hourly / monthly values)
+sal <- jobs |>
+  filter(has_listed_salary == 1, between(salary_midpoint, 10000, 500000)) |>
+  mutate(salary_source = if_else(is_predicted_salary == 1,
+                                 "API-estimated", "Employer-stated"))
+sal_scope <- sal |> filter(seniority_tier %in% c("Intern", "Junior / Entry-Level"))
+
+# Headline numbers used in the summary
+n_total         <- nrow(jobs)
+n_scope         <- nrow(scope)
+n_mislabeled    <- sum(jobs$seniority_tier == "Mid/Senior Mislabeled")
+pct_scope       <- n_scope / n_total
+pct_mislabeled  <- n_mislabeled / n_total
+pct_true_entry  <- mean(scope$experience_tier == "0-1 Years / Entry")
+pct_2plus       <- mean(scope$experience_tier %in% c("2+ Years", "3+ Years"))
+pct_adv_degree  <- mean(scope$degree_tier %in% c("Master's", "PhD"))
+median_salary   <- median(sal_scope$salary_midpoint, na.rm = TRUE)
+pct_sal_discl   <- mean(scope$has_listed_salary == 1)
+top_skill       <- skill_pct |> group_by(skill_label) |>
+  summarise(m = mean(pct)) |> slice_max(m, n = 1) |> pull(skill_label)
+biggest_role    <- scope |> count(normalized_role) |> slice_max(n, n = 1) |>
+  pull(normalized_role) |> as.character()
+snapshot_date   <- max(as.Date(jobs$posted_date), na.rm = TRUE)
+mean_desc_chars <- round(mean(jobs$description_length, na.rm = TRUE))
+```
+
+# Executive summary
+
+This report audits `r comma(n_total)` deduplicated, full-text job postings ($\ge 1{,}000$ description characters; mean length `r comma(mean_desc_chars)` characters) across four career tracks: Data Analyst, Data Scientist, ML Engineer, and AI Engineer. By filtering out short API preview snippets (< 1,000 characters) from `raw_jobs`, keyword extraction captures complete Requirements and Qualifications sections rather than truncated headlines.
+
+After separating postings that lacked explicit senior titles in raw ATS feeds, or matched junior queries despite requiring 4+ years of experience (`r comma(n_mislabeled)` postings, `r percent(pct_mislabeled, accuracy = 0.1)`), `r comma(n_scope)` verified Intern and Junior / Entry-Level postings (`r percent(pct_scope, accuracy = 0.1)`) remain in the core analysis scope.
+
+**Key findings** (percentages marked as computed are calculated from the data at render time):
+
+- **Volume & sample concentration:** Data Scientist (n = 69) and ML Engineer (n = 69) tie for the largest verified Intern/Junior volume in the full-text corpus, followed by AI Engineer (n = 42) and Data Analyst (n = 8, reflecting the heavy tech/AI employer mix of public ATS boards).
+- **True entry-level share:** Only `r percent(pct_true_entry, accuracy = 0.1)` of in-scope postings explicitly advertise 0–1 Years / Entry, while `r percent(pct_2plus, accuracy = 0.1)` still request 2+ Years or 3+ Years inside the full description text.
+- **Credential gatekeeping:** `r percent(pct_adv_degree, accuracy = 0.1)` of in-scope postings mention a Master's or PhD, driven heavily by ML Engineer (65.2% Master's/PhD) and Data Scientist (55.1% Master's/PhD), compared to AI Engineer (16.7% Master's/PhD).
+- **Pay transparency:** Only `r percent(pct_sal_discl, accuracy = 0.1)` of verified Intern/Junior postings disclose compensation (n = 25 listings), with an overall median of `r dollar(median_salary)` skewed upward by Silicon Valley AI/ML engineering roles.
+- **Most requested skill overall:** `r top_skill` leads average demand across all four tracks, joined by LLM / GenAI (95.2% in AI Engineer, 56.5% in ML Engineer, 53.6% in Data Scientist) and SQL (87.5% in Data Analyst).
+
+::: {.callout-note}
+**Data snapshot & scope:** The most recent posting date in the dataset is `r format(snapshot_date)`. To prevent false-negative skill counts caused by free-tier snippet truncation, `clean_jobs` enforces `LENGTH(description_snippet) >= 1000`, focusing the analytical sample on full-text public ATS and API postings.
+:::
+
+# Project vision and method
+
+## Research questions
+
+1. **Role demand and accessibility:** How do verified entry-level and internship volumes compare across the four titles once mid/senior roles are filtered out?
+2. **Skill overlap vs. specialization:** Which technical skills are universal across tracks, and which stacks define each specialization when full descriptions are parsed?
+3. **Credential and experience barriers:** How many junior/intern postings require a Master's/PhD or 2+ years of prior experience?
+4. **Compensation and work mode:** How do disclosed salaries and remote/hybrid availability differ across roles?
+
+## Pipeline
+
+```{mermaid}
+flowchart LR
+  A["Official Job APIs and<br/>Public ATS Feeds"] --> B[("Postgres<br/>raw_jobs")]
+  B --> C["sql/01_clean_and_normalize.sql<br/>≥1,000 char filter, dedupe, regex"]
+  C --> D[("clean_jobs<br/>n = 636 full-text")]
+  D --> E["sql/02_market_analysis.sql<br/>analytical views"]
+  D --> F["R/02_export_for_tableau.R"]
+  F --> G["jobs_cleaned.csv<br/>Tableau Public"]
+  F --> H["This report"]
+```
+
+| Step | What happens |
+|------|--------------|
+| **Collection** | Multi-source ingestion via official REST APIs (Adzuna) and public ATS JSON endpoints (Greenhouse, Lever, Ashby, The Muse) into `raw_jobs` |
+| **Quality Gate** | Retains postings with `LENGTH(description_snippet) >= 1000` so regex parsers evaluate full requirement lists rather than truncated snippets |
+| **Deduplication** | One row per company + normalized title + location, preferring rows with listed salary and longer descriptions |
+| **Role & Seniority** | Title-first regex taxonomy into 4 roles; separates Intern, Junior / Entry-Level, and Mid/Senior Mislabeled (senior title keywords or 4+ years experience) |
+| **Feature Engineering** | Case-insensitive PostgreSQL regex (`~*`) flags across 16 technical skills, experience tier, degree tier, and work mode |
+
+# Q1. Role demand and accessibility
+
+```{r}
+#| label: fig-role-volume
+#| fig-cap: "Full-text postings by role and seniority tier. Grey bars are postings that lacked senior titles in raw ATS feeds but contained senior keywords or 4+ year experience requirements."
+jobs |>
+  count(normalized_role, seniority_tier, .drop = FALSE) |>
+  ggplot(aes(normalized_role, n, fill = seniority_tier)) +
+  geom_col() +
+  geom_text(aes(label = if_else(n > 0, comma(n), "")),
+            position = position_stack(vjust = 0.5), size = 3.2, colour = "white") +
+  scale_fill_manual(values = c("Intern" = "#2a9d8f",
+                               "Junior / Entry-Level" = "#264653",
+                               "Mid/Senior Mislabeled" = "#bdbdbd"),
+                    name = NULL) +
+  labs(x = NULL, y = "Unique full-text postings",
+       title = "Where the verified intern and junior openings are")
+```
+
+```{r}
+#| label: tbl-accessibility
+jobs |>
+  group_by(normalized_role) |>
+  summarise(
+    `Total postings`  = n(),
+    `Intern`          = sum(seniority_tier == "Intern"),
+    `Junior`          = sum(seniority_tier == "Junior / Entry-Level"),
+    `Intern + Junior` = sum(seniority_tier %in% c("Intern", "Junior / Entry-Level")),
+    `Mid/Senior rate` = percent(mean(seniority_tier == "Mid/Senior Mislabeled"), accuracy = 0.1),
+    `Explicit 0-1 yr` = sum(seniority_tier %in% c("Intern", "Junior / Entry-Level") &
+                              experience_tier == "0-1 Years / Entry"),
+    .groups = "drop"
+  ) |>
+  rename(Role = normalized_role) |>
+  kable(caption = "Accessibility summary across full-text postings. 'Mid/Senior rate' measures roles requiring 4+ years or senior titles.")
+```
+
+**Reading this:** Because public ATS boards (Greenhouse, Lever, Ashby) publish every open role at tech/AI companies without pre-filtering by seniority, 70.4% (448 / 636) of full-text postings fall into Mid/Senior Mislabeled, highest in Data Analyst (78.4%) and ML Engineer (73.5%). Within verified Intern + Junior openings (n = 188), ML Engineer (31 Intern, 38 Junior) and Data Scientist (17 Intern, 52 Junior) provide the largest pools, while AI Engineer (1 Intern, 41 Junior) skews almost entirely toward full-time junior hires.
+
+# Q2. Skill overlap vs. specialization
+
+All skill percentages below use verified Intern + Junior postings only (n = 188). Data Analyst has a small in-scope sample (n = 8), so percentages for that column should be interpreted directionally.
+
+```{r}
+#| label: fig-skill-heatmap
+#| fig-height: 7.5
+#| fig-cap: "Share of verified Intern + Junior full-text postings mentioning each skill, by role."
+role_n <- scope |> count(normalized_role, .drop = FALSE) |>
+  mutate(role_lab = paste0(normalized_role, "\n(n = ", n, ")"))
+
+skill_pct |>
+  left_join(role_n, by = "normalized_role") |>
+  mutate(role_lab = fct_reorder(role_lab, as.integer(normalized_role))) |>
+  ggplot(aes(role_lab, fct_rev(factor(skill_label, levels = skill_meta$skill_label)), fill = pct)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = round(pct)), size = 3.2) +
+  facet_grid(domain ~ ., scales = "free_y", space = "free_y") +
+  scale_fill_gradient(low = "#f7fbff", high = "#2171b5", name = "% of postings") +
+  labs(x = NULL, y = NULL, title = "Role-by-skill heatmap (full-text corpus)")
+```
+
+## Universal vs. role-specific skill tiers {#sec-skills-note}
+
+```{r}
+#| label: tbl-skill-class
+universal_cut <- 14   # reaches at least ~14-15% in every role
+spread_cut    <- 25   # percentage-point gap between peak and lowest role
+
+skill_class <- skill_pct |>
+  group_by(skill_label, domain) |>
+  summarise(min_pct = min(pct), max_pct = max(pct),
+            top_role = as.character(normalized_role[which.max(pct)]),
+            .groups = "drop") |>
+  mutate(Type = case_when(
+    min_pct >= universal_cut        ~ "Universal",
+    max_pct - min_pct >= spread_cut ~ "Role-specific",
+    TRUE                            ~ "Niche / low demand"
+  )) |>
+  arrange(factor(Type, c("Universal", "Role-specific", "Niche / low demand")), desc(max_pct))
+
+skill_class |>
+  transmute(Skill = skill_label, Domain = domain, Type,
+            `Lowest role %` = round(min_pct, 1), `Highest role %` = round(max_pct, 1),
+            `Peaks in` = top_role) |>
+  kable(caption = glue::glue("Universal = at least {universal_cut}% in every role; role-specific = {spread_cut}+ point spread across roles."))
+```
+
+```{r}
+#| label: tbl-top5
+skill_pct |>
+  group_by(normalized_role) |>
+  slice_max(pct, n = 5, with_ties = FALSE) |>
+  summarise(`Top 5 skills (% of postings)` =
+              paste0(skill_label, " (", round(pct, 1), "%)", collapse = ", ")) |>
+  rename(Role = normalized_role) |>
+  kable(caption = "Top 5 most requested skills per career track (Intern + Junior full-text scope).")
+```
+
+**Key skill takeaways:**
+
+- **Universal core (Python & SQL):** Python is requested in 50.0% to 84.1% of postings across every track, and SQL appears in 14.3% to 87.5%, confirming both as foundational entry requirements.
+- **GenAI is now mainstream across science & AI tracks:** LLM / GenAI keywords appear in 95.2% of AI Engineer, 56.5% of ML Engineer, and 53.6% of Data Scientist entry-level postings, far outpacing legacy BI tools in engineering-heavy organizations.
+- **Deep learning separates ML Engineers:** PyTorch (63.8%) and TensorFlow (43.5%) surge in ML Engineer postings, whereas AI Engineer roles prioritize LLM / GenAI (95.2%), Python (69.0%), and cloud deployment (Azure 11.9%, GCP 9.5%, AWS 7.1%).
+
+# Q3. Credential and experience barriers
+
+```{r}
+#| label: fig-experience
+#| fig-cap: "Years of experience requested in verified Intern + Junior postings."
+scope |>
+  count(normalized_role, experience_tier, .drop = FALSE) |>
+  group_by(normalized_role) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(normalized_role, share, fill = experience_tier)) +
+  geom_col() +
+  geom_text(aes(label = if_else(share >= 0.05, percent(share, accuracy = 1), "")),
+            position = position_stack(vjust = 0.5), size = 3.2, colour = "white") +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c("0-1 Years / Entry" = "#2a9d8f", "Not Specified" = "#adb5bd",
+                               "2+ Years" = "#e9a23b", "3+ Years" = "#c1121f"), name = NULL) +
+  labs(x = NULL, y = "Share of postings", title = "Experience barrier by role")
+```
+
+```{r}
+#| label: fig-degree
+#| fig-cap: "Highest degree level mentioned in verified Intern + Junior postings."
+scope |>
+  count(normalized_role, degree_tier, .drop = FALSE) |>
+  group_by(normalized_role) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(normalized_role, share, fill = degree_tier)) +
+  geom_col() +
+  geom_text(aes(label = if_else(share >= 0.05, percent(share, accuracy = 1), "")),
+            position = position_stack(vjust = 0.5), size = 3.2, colour = "white") +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c("Not Specified" = "#adb5bd", "Bachelor's" = "#2a9d8f",
+                               "Master's" = "#e9a23b", "PhD" = "#c1121f"), name = NULL) +
+  labs(x = NULL, y = "Share of postings", title = "Degree requirements by role")
+```
+
+```{r}
+#| label: tbl-barriers
+scope |>
+  group_by(normalized_role) |>
+  summarise(
+    `In-scope n`            = n(),
+    `Asks 2+ yrs`           = percent(mean(experience_tier %in% c("2+ Years", "3+ Years")), accuracy = 0.1),
+    `Mentions Master's/PhD` = percent(mean(degree_tier %in% c("Master's", "PhD")), accuracy = 0.1),
+    `Mentions PhD`          = percent(mean(degree_tier == "PhD"), accuracy = 0.1),
+    .groups = "drop"
+  ) |>
+  rename(Role = normalized_role) |>
+  kable(caption = "Experience and education barrier summary for verified Intern + Junior postings.")
+```
+
+**Reading this:** AI Engineer shows the lowest formal degree barrier among the technical tracks: only 16.7% mention a Master's or PhD (and 76.2% specify no degree requirement at all), signaling strong emphasis on applied LLM/Python shipping ability over academic credentials. Conversely, ML Engineer (65.2% Master's/PhD, 53.6% PhD) and Data Scientist (55.1% Master's/PhD, 44.9% PhD) heavily favor graduate researchers, particularly in research-lab internships.
+
+# Q4. Compensation and work mode
+
+## Salary
+
+```{r}
+#| label: fig-salary
+#| fig-cap: "Annual salary midpoint for verified Intern + Junior postings with disclosed pay (n shown under each role)."
+sal_n <- sal_scope |> count(normalized_role, .drop = FALSE) |>
+  mutate(lab = paste0(normalized_role, "\n(n = ", n, ")"))
+
+sal_scope |>
+  left_join(sal_n |> select(normalized_role, lab), by = "normalized_role") |>
+  ggplot(aes(lab, salary_midpoint, fill = salary_source)) +
+  geom_boxplot(outlier.alpha = 0.4, position = position_dodge(preserve = "single")) +
+  scale_y_continuous(labels = dollar) +
+  scale_fill_manual(values = c("Employer-stated" = "#264653", "API-estimated" = "#e9a23b"),
+                    name = NULL) +
+  labs(x = NULL, y = "Annual salary midpoint (USD)", title = "Disclosed salary by role (Intern + Junior)")
+```
+
+```{r}
+#| label: tbl-salary
+scope |>
+  group_by(normalized_role) |>
+  summarise(
+    `In-scope n`       = n(),
+    `Salary disclosed` = percent(mean(has_listed_salary == 1), accuracy = 0.1),
+    `Disclosed n`      = sum(has_listed_salary == 1),
+    .groups = "drop"
+  ) |>
+  left_join(
+    sal_scope |> group_by(normalized_role) |>
+      summarise(`Median salary` = dollar(median(salary_midpoint)),
+                .groups = "drop"),
+    by = "normalized_role"
+  ) |>
+  rename(Role = normalized_role) |>
+  kable(caption = "Salary disclosure rate and median annualized midpoint across verified Intern + Junior postings.")
+```
+
+## Work mode
+
+```{r}
+#| label: fig-workmode
+#| fig-cap: "Remote / hybrid / on-site mix in verified Intern + Junior postings."
+scope |>
+  count(normalized_role, work_mode, .drop = FALSE) |>
+  group_by(normalized_role) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(normalized_role, share, fill = work_mode)) +
+  geom_col() +
+  geom_text(aes(label = if_else(share >= 0.05, percent(share, accuracy = 1), "")),
+            position = position_stack(vjust = 0.5), size = 3.2, colour = "white") +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c("Remote" = "#2a9d8f", "Hybrid" = "#e9a23b",
+                               "On-Site / Not Specified" = "#adb5bd"), name = NULL) +
+  labs(x = NULL, y = "Share of postings", title = "Work-mode availability by role")
+```
+
+# Role scorecard and recommendations
+
+```{r}
+#| label: tbl-scorecard
+scorecard <- scope |>
+  group_by(normalized_role) |>
+  summarise(
+    postings     = n(),
+    pct_0_1      = mean(experience_tier == "0-1 Years / Entry"),
+    pct_2plus    = mean(experience_tier %in% c("2+ Years", "3+ Years")),
+    pct_adv      = mean(degree_tier %in% c("Master's", "PhD")),
+    pct_flexible = mean(work_mode != "On-Site / Not Specified"),
+    .groups = "drop"
+  ) |>
+  left_join(sal_scope |> group_by(normalized_role) |>
+              summarise(median_salary = median(salary_midpoint), .groups = "drop"),
+            by = "normalized_role")
+
+scorecard |>
+  transmute(
+    Role                     = normalized_role,
+    `Intern/Junior postings` = postings,
+    `Explicit 0-1 yr`        = percent(pct_0_1, accuracy = 0.1),
+    `Asks 2+ yrs`            = percent(pct_2plus, accuracy = 0.1),
+    `Master's/PhD`           = percent(pct_adv, accuracy = 0.1),
+    `Remote/Hybrid`          = percent(pct_flexible, accuracy = 0.1),
+    `Median salary`          = dollar(median_salary)
+  ) |>
+  kable(caption = "One-table comparison of the four tracks (verified Intern + Junior full-text scope).")
+
+easiest_entry  <- scorecard |> slice_max(postings, n = 1, with_ties = FALSE) |>
+  pull(normalized_role) |> as.character()
+lowest_barrier <- scorecard |> mutate(barrier = pct_2plus + pct_adv) |>
+  slice_min(barrier, n = 1, with_ties = FALSE) |> pull(normalized_role) |> as.character()
+```
+
+## What the data suggests
+
+- **Largest verified entry-level pools:** Data Scientist (n = 69) and ML Engineer (n = 69) offer the highest volume of full-text intern/junior openings in this sample, though over half mention Master's or PhD degrees.
+- **Lowest combined barrier (2+ yrs + Master's/PhD):** `r lowest_barrier` (33.3% combined barrier rate, 76.2% with no degree requirement specified), making it the most accessible engineering track for candidates with strong applied Python + LLM / GenAI portfolios.
+- **Start with the universal stack** in @sec-skills-note (Python and SQL), then layer on track-specific differentiators: LLM / GenAI + Cloud for AI Engineer, PyTorch / TensorFlow for ML Engineer, or SQL + Excel / Tableau for Data Analyst.
+- **Filter ATS listings carefully:** Because over 70% of unfiltered postings on company career boards require 4+ years of experience, filtering by explicit years of experience and internship tags saves substantial application time.
+- **Treat salary medians as directional:** Only `r percent(pct_sal_discl, accuracy = 0.1)` of full-text ATS/API entry-level postings list compensation (n = 25), largely concentrated in high-cost US tech hubs.
+
+# Limitations and data governance {#sec-limitations}
+
+- **Full-text quality gate vs. market breadth:** Filtering `clean_jobs` to `LENGTH(description_snippet) >= 1000` eliminates Adzuna's ~250-character snippet truncation and dramatically improves skill-extraction recall, but shifts the sample toward tech and AI employers using public ATS boards (Greenhouse, Lever, Ashby) and full-text APIs (The Muse). Consequently, traditional corporate Data Analyst roles are underrepresented (n = 8 in-scope) relative to Data Scientist and ML/AI Engineer roles.
+- **Small cell sizes:** Cells with $n < 30$, specifically Data Analyst (n = 8 Intern + Junior) and salary subsets (n = 2 to n = 13 per role), exhibit higher variance and should be read as directional indicators rather than population parameters.
+- **Regex precision:** Case-insensitive word-boundary regex (`~*`) flags keyword presence rather than proficiency depth. For example, standalone R (`\mr\M`), git, or rag can occasionally match unrelated acronyms, and `degree_tier` records the highest degree mentioned anywhere in the description (including "Master's preferred").
+- **Salary disclosure bias:** Public ATS boards frequently omit compensation unless required by state pay-transparency laws (e.g., California, New York, Washington), biasing disclosed medians upward toward coastal tech markets.
+- **Ethics & reproducibility:** All records were collected strictly from official public APIs and public ATS JSON endpoints with zero unauthorized web scraping. The entire pipeline (R ingestion $\rightarrow$ PostgreSQL $\rightarrow$ SQL cleaning $\rightarrow$ Quarto rendering) runs deterministically inside Docker Compose.
+
+# Reproducibility
+
+```bash
+docker compose up -d
+# In the rocker container: run ingestion scripts, SQL cleaning/views, and R/02_export_for_tableau.R
+quarto render reports/case_study_report.qmd --output-dir ../docs
+```
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,53 @@
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    container_name: adzuna_postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-analyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analyst_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-job_market_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst} -d ${POSTGRES_DB:-job_market_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rocker:
+    build:
+      context: .
+      dockerfile: docker/rocker/Dockerfile
+    container_name: adzuna_rocker
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PASSWORD: ${RSTUDIO_PASSWORD:-rstudio}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-analyst}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-analyst_pass}
+      PGDATABASE: ${POSTGRES_DB:-job_market_db}
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./.env:/home/rstudio/project/.env:ro
+      - ./R:/home/rstudio/project/R
+      - ./sql:/home/rstudio/project/sql
+      - ./reports:/home/rstudio/project/reports
+      - ./docs:/home/rstudio/project/docs
+      - ./data:/home/rstudio/project/data
+
+volumes:
+  pgdata:
